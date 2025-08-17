@@ -1,9 +1,22 @@
 import socket
 import struct
 import threading
+import time
 
 id = '127.0.0.1'
 my_sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+initial_seq = 100
+initial_ack = 500
+connection = False
+
+SYN  = 0b00000001
+ACK  = 0b00000010
+KAF  = 0b00000100
+FIN  = 0b00001000
+DUP  = 0b00010000
+NACK = 0b00100000
+TXT  = 0b01000000
+FRF2 = 0b10000000
 
 
 class Packet:
@@ -13,6 +26,44 @@ class Packet:
         self.ack_num : int # 3B
         self.checksum : int # 2B
         self.data = b""  # 8B
+
+
+def start_connection_init(my_sock,other_port, packet):
+    if packet.flag == 0:                                #flag = None
+        paketix = Packet()
+        paketix.seq_num = initial_seq
+        paketix.ack_num = 0
+        paketix.flag = SYN
+        paketix.checksum = 0
+        print("[INFO] SYN sended")
+        time.sleep(1)
+        my_sock.sendto(new_packet(paketix), (id, other_port))
+    elif packet.flag & SYN and packet.flag & ACK == 0:    #flag = SYN
+        paketix = Packet()
+        paketix.seq_num = packet.seq_num + 1
+        paketix.ack_num = initial_ack
+        paketix.flag = SYN | ACK
+        paketix.checksum = 0
+        time.sleep(1)
+        print("[INFO] SYN-ACK sended")
+        my_sock.sendto(new_packet(paketix), (id, other_port))
+    elif packet.flag & SYN and packet.flag & ACK:         #flag = SYN-ACK
+        paketix = Packet()
+        paketix.seq_num = packet.seq_num + 1
+        paketix.ack_num = packet.ack_num + 1 
+        paketix.flag = ACK
+        paketix.checksum = 0
+        time.sleep(1)
+        print("[INFO] ACK sended")
+        my_sock.sendto(new_packet(paketix), (id, other_port))
+        global connection
+        connection = True
+        return
+
+
+
+    
+     
 
 
 def new_packet(packet):
@@ -50,63 +101,107 @@ else:
     my_sock.sendto(message.encode(),(addr,port))"""
 
 
-SYN  = 0b00000001
-ACK  = 0b00000010
-KAF  = 0b00000100
-FIN  = 0b00001000
-DUP  = 0b00010000
-NACK = 0b00100000
-TXT  = 0b01000000
-FRF2 = 0b10000000
+
 
 def check_flag(flag):
     if flag & SYN:
-        print("SYN sended")
+        return "SYN"
     if flag & ACK:    
-        print("ACK sended")
+        print("ACK recieved")
     if flag & KAF:    
-        print("KAF sended")
+        print("KAF recieved")
     if flag & FIN:    
-        print("FIN sended")
+        print("FIN recieved")
     if flag & DUP:    
-        print("DUP sended")
+        print("DUP recieved")
     if flag & NACK:    
-        print("NACK sended")
+        print("NACK recieved")
     if flag & TXT:    
-        print("TXT sended")
+        print("TXT recieved")
     if flag & FRF2:    
-        print("FRF2 sended")
+        print("FRF2 recieved")
     if flag & 0b00000000:
         print("flag is NULL")
 
 
 
 
-def recieve(my_sock,port):
+def recieve(my_sock,port, other_port):
+    global connection
     my_sock.bind(('0.0.0.0',port))
     while(True):
         message, addr = my_sock.recvfrom(1024)
         paketix = unpack(message)
-        print(paketix.data.decode("utf-8"))
+        #print(f"RECIEVED FLAG: {paketix.flag}, &SYN: {paketix.flag & SYN}, &ACK {paketix.flag & ACK}, &SYN-ACK {paketix.flag  & SYN and paketix.flag & ACK}")
+        
+        
 
-def send(my_sock,port, paketix):
+        if paketix.flag  & SYN and paketix.flag & ACK:
+            print("[INFO] SYN-ACK received")
+            time.sleep(1)
+            start_connection_init(my_sock,other_port, paketix)
+        elif paketix.flag & SYN and paketix.flag & ACK == 0:
+            
+            print("[INFO] SYN recieved")
+            time.sleep(1)
+            start_connection_init(my_sock,other_port, paketix)
+        elif paketix.flag & ACK and paketix.flag & SYN == 0:
+            
+            print("[INFO] ACK recieved\n[INFO] Connection established")
+            connection = True
+
+        if connection:
+            if paketix.data:
+                print(paketix.data.decode("utf-8"))
+            continue
+
+        
+        
+
+def send(my_sock,port, paketix = None):
+    global connection
+    print(f"WELL SEND FLAG!{paketix.flag}, &SYN: {paketix.flag & SYN}, &ACK {paketix.flag & ACK}, &SYN-ACK {paketix.flag  & SYN and paketix.flag & ACK}")
     while(True):
-        message = input("type a message: ")
-        if message == "e":
-            break
-        paketix.data = message.encode("utf-8")
+        if connection:
+            if paketix == None:
+                paketix = Packet()
+                paketix.flag = TXT
+                message = input("type a message: ")
+                if message == "e":
+                    break
+                paketix.data = message.encode("utf-8")
         packed_data = new_packet(paketix)
         my_sock.sendto(packed_data,(id,port))
 
-paketix = Packet()
-paketix.seq_num = 100
-paketix.ack_num = 100
-paketix.flag = ACK
-paketix.checksum = 69
+
+
+
 
 
 my_port = int(input("my port:"))
 other_port = int(input("friend's port:"))
-threading.Thread(target = recieve,args = (my_sock,my_port),daemon = True).start()
-send(my_sock,other_port, paketix)
+threading.Thread(target = recieve,args = (my_sock,my_port,other_port),daemon = True).start()
+init = input("wanna initialize a connection? (y/n)") == 'y'
+if init:
+    paketix = Packet()
+    paketix.seq_num = 0
+    paketix.ack_num = 0
+    paketix.flag = 0
+    paketix.checksum = 0
+    start_connection_init(my_sock,other_port,paketix)
+else:
+    print("waitin for SYN...")
+        
+try:
+    while True:  
+        time.sleep(1)
+except KeyboardInterrupt:
+    my_sock.close()
+    print("program stopped")
+#paketix = Packet()
+#paketix.seq_num = 0
+#paketix.ack_num = 0
+#paketix.flag = 0
+#paketix.checksum = 0
+#send(my_sock,other_port, paketix)
 my_sock.close()
